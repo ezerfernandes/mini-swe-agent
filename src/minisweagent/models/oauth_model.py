@@ -103,6 +103,68 @@ class OAuthLitellmModelConfig(LitellmModelConfig):
     """``originator`` header sent to Codex."""
 
 
+def resolve_oauth_kwargs(config: OAuthLitellmModelConfig) -> dict[str, Any]:
+    """Resolve the per-request kwargs (headers, api_base, api_key) for the active provider.
+
+    Module-level so :class:`OAuthLitellmModel` and the Responses-API variant
+    (:class:`minisweagent.models.oauth_response_model.OAuthLitellmResponseModel`)
+    can share it without subclassing entanglement.
+    """
+    provider_id = config.oauth_provider
+    creds = oauth.get_credentials(provider_id, refresh_if_expired=True)
+    if creds is None:
+        raise RuntimeError(
+            f"No OAuth credentials for provider {provider_id!r}. Run `mini-extra oauth login {provider_id}` first."
+        )
+    token = creds.access
+
+    if provider_id == "anthropic":
+        return {
+            "api_key": _ANTHROPIC_OAUTH_API_KEY_SENTINEL,
+            "extra_headers": {
+                "Authorization": f"Bearer {token}",
+                "x-api-key": "",
+                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+                "user-agent": f"claude-cli/{_claude_code_version()}",
+                "x-app": "cli",
+            },
+        }
+
+    if provider_id == "github-copilot":
+        from minisweagent.oauth.github_copilot import (
+            COPILOT_HEADERS,
+            get_github_copilot_base_url,
+        )
+
+        enterprise = creds.extra.get("enterprise_url")
+        base_url = get_github_copilot_base_url(token, enterprise)
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {token}",
+            **COPILOT_HEADERS,
+        }
+        return {"api_key": token, "api_base": base_url, "extra_headers": headers}
+
+    if provider_id == "openai-codex":
+        account_id = creds.extra.get("account_id")
+        if not account_id:
+            raise RuntimeError("Codex credentials missing account_id; re-run login.")
+        user_agent = f"mini-swe-agent ({platform.system()} {platform.release()}; {platform.machine()})"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "chatgpt-account-id": account_id,
+            "originator": config.codex_originator,
+            "OpenAI-Beta": "responses=experimental",
+            "User-Agent": user_agent,
+        }
+        return {
+            "api_key": token,
+            "api_base": config.codex_base_url,
+            "extra_headers": headers,
+        }
+
+    raise RuntimeError(f"Unsupported oauth_provider: {provider_id}")
+
+
 class OAuthLitellmModel(LitellmModel):
     """LiteLLM model that authenticates via stored OAuth credentials."""
 
@@ -116,60 +178,7 @@ class OAuthLitellmModel(LitellmModel):
     # -- request building --------------------------------------------------
 
     def _resolve_oauth_kwargs(self) -> dict[str, Any]:
-        """Resolve the per-request kwargs (headers, api_base, api_key) for the active provider."""
-        provider_id = self.config.oauth_provider
-        creds = oauth.get_credentials(provider_id, refresh_if_expired=True)
-        if creds is None:
-            raise RuntimeError(
-                f"No OAuth credentials for provider {provider_id!r}. Run `mini-extra oauth login {provider_id}` first."
-            )
-        token = creds.access
-
-        if provider_id == "anthropic":
-            return {
-                "api_key": _ANTHROPIC_OAUTH_API_KEY_SENTINEL,
-                "extra_headers": {
-                    "Authorization": f"Bearer {token}",
-                    "x-api-key": "",
-                    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-                    "user-agent": f"claude-cli/{_claude_code_version()}",
-                    "x-app": "cli",
-                },
-            }
-
-        if provider_id == "github-copilot":
-            from minisweagent.oauth.github_copilot import (
-                COPILOT_HEADERS,
-                get_github_copilot_base_url,
-            )
-
-            enterprise = creds.extra.get("enterprise_url")
-            base_url = get_github_copilot_base_url(token, enterprise)
-            headers: dict[str, str] = {
-                "Authorization": f"Bearer {token}",
-                **COPILOT_HEADERS,
-            }
-            return {"api_key": token, "api_base": base_url, "extra_headers": headers}
-
-        if provider_id == "openai-codex":
-            account_id = creds.extra.get("account_id")
-            if not account_id:
-                raise RuntimeError("Codex credentials missing account_id; re-run login.")
-            user_agent = f"mini-swe-agent ({platform.system()} {platform.release()}; {platform.machine()})"
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "chatgpt-account-id": account_id,
-                "originator": self.config.codex_originator,
-                "OpenAI-Beta": "responses=experimental",
-                "User-Agent": user_agent,
-            }
-            return {
-                "api_key": token,
-                "api_base": self.config.codex_base_url,
-                "extra_headers": headers,
-            }
-
-        raise RuntimeError(f"Unsupported oauth_provider: {provider_id}")
+        return resolve_oauth_kwargs(self.config)
 
     def _prepare_messages_for_api(self, messages: list[dict]) -> list[dict]:
         prepared = super()._prepare_messages_for_api(messages)
@@ -202,4 +211,11 @@ class OAuthLitellmModel(LitellmModel):
         return super()._query(messages, **merged)
 
 
-__all__ = ["OAuthLitellmModel", "OAuthLitellmModelConfig"]
+__all__ = [
+    "CLAUDE_CODE_SYSTEM_PROMPT",
+    "OAuthLitellmModel",
+    "OAuthLitellmModelConfig",
+    "_VALID_PROVIDERS",
+    "_extract_text",
+    "resolve_oauth_kwargs",
+]

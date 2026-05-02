@@ -182,8 +182,49 @@ Read more in our [documentation](https://mini-swe-agent.com/latest/):
 * [Global configuration](https://mini-swe-agent.com/latest/advanced/global_configuration/)
 * [Yaml configuration files](https://mini-swe-agent.com/latest/advanced/yaml_configuration/)
 * [Power up with the cookbook](https://mini-swe-agent.com/latest/advanced/cookbook/)
+* [OAuth subscriptions (Claude Pro/Max, ChatGPT Plus/Pro, GitHub Copilot)](https://mini-swe-agent.com/latest/models/oauth/)
 * [FAQ](https://mini-swe-agent.com/latest/faq/)
 * [Contribute!](https://mini-swe-agent.com/latest/contributing/)
+
+## Using subscription-based models (no API key needed)
+
+`mini` supports Claude Pro/Max, ChatGPT Plus/Pro (Codex), and GitHub Copilot subscriptions via OAuth — no pay-per-token API key required.
+
+```bash
+# 1. Log in once (opens a browser)
+mini-extra oauth login openai-codex   # ChatGPT Plus/Pro
+mini-extra oauth login anthropic      # Claude Pro/Max
+mini-extra oauth login github-copilot # GitHub Copilot (device-code flow)
+```
+
+**Pick the right `--model-class`:**
+
+| provider         | model class       | example `model_name`                  |
+| ---------------- | ----------------- | ------------------------------------- |
+| `anthropic`      | `oauth`           | `anthropic/claude-sonnet-4-5-20250929` |
+| `openai-codex`   | **`oauth_response`** | `openai/gpt-5.4` (also `gpt-5`, `gpt-5.1`, `codex-mini-latest`) |
+| `github-copilot` | `oauth`           | seat-dependent (e.g. `claude-sonnet-4-5`) |
+
+Codex needs `oauth_response` because the ChatGPT Plus/Pro backend only mounts its models under the OpenAI Responses API (`/responses`); the plain `oauth` class hits `/chat/completions` and 404s. **Models gated to API/org accounts** (`gpt-5-codex`, `gpt-5.1-codex-max`) are rejected for ChatGPT subscriptions — pick one of the IDs above.
+
+Drop a personal yaml so you don't have to retype flags. `-c` files merge left-to-right; later files win. **`-c` replaces (not merges) the bundled config**, so always pass `mini.yaml` first.
+
+```yaml
+# ~/my-codex.yaml
+model:
+  model_class: oauth_response
+  model_name: openai/gpt-5.4
+  oauth_provider: openai-codex
+  cost_tracking: ignore_errors   # Codex models aren't in LiteLLM's pricing table
+```
+
+```bash
+mini \
+  -c "$(MSWEA_SILENT_STARTUP=1 python -c 'from minisweagent.config import builtin_config_dir; print(builtin_config_dir / "mini.yaml")')" \
+  -c ~/my-codex.yaml
+```
+
+Tokens are stored locally (`~/.config/mini-swe-agent/oauth.json`, mode `0600`) and refreshed automatically. See the [full OAuth docs](https://mini-swe-agent.com/latest/models/oauth/) — they cover the Codex Responses-API requirements, troubleshooting (404, `Stream must be set to true`, "model not supported"), and the management CLI (`oauth status`, `oauth refresh`, `oauth list`).
 
 ## Attribution
 
